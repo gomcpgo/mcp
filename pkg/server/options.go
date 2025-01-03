@@ -5,6 +5,14 @@ import (
 	"github.com/gomcpgo/mcp/pkg/transport"
 )
 
+// Options configures the MCP server
+type Options struct {
+	Name      string
+	Version   string
+	Registry  *handler.HandlerRegistry
+	Transport transport.Transport
+}
+
 // Option is a function that can be used to configure the server
 type Option func(*Options)
 

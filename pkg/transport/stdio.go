@@ -13,21 +13,21 @@ import (
 )
 
 type StdioTransport struct {
-	encoder    *json.Encoder
-	decoder    *json.Decoder
-	requests   chan *protocol.Request
-	errors     chan error
-	done       chan struct{}
-	closeOnce  sync.Once
+	encoder   *json.Encoder
+	decoder   *json.Decoder
+	requests  chan *protocol.Request
+	errors    chan error
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func NewStdioTransport() *StdioTransport {
 	return &StdioTransport{
-		encoder:   json.NewEncoder(os.Stdout),
-		decoder:   json.NewDecoder(os.Stdin),
-		requests:  make(chan *protocol.Request),
-		errors:    make(chan error),
-		done:      make(chan struct{}),
+		encoder:  json.NewEncoder(os.Stdout),
+		decoder:  json.NewDecoder(os.Stdin),
+		requests: make(chan *protocol.Request),
+		errors:   make(chan error),
+		done:     make(chan struct{}),
 	}
 }
 

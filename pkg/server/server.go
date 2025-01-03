@@ -11,14 +11,6 @@ import (
 	"github.com/gomcpgo/mcp/pkg/transport"
 )
 
-// Server options for configuration
-type Options struct {
-	Name        string
-	Version     string
-	Registry    *handler.HandlerRegistry
-	Transport   transport.Transport
-}
-
 // Server represents an MCP server instance
 type Server struct {
 	options  Options
@@ -26,20 +18,29 @@ type Server struct {
 	transport transport.Transport
 }
 
-// New creates a new MCP server instance
+// New creates a new MCP server instance with the provided options
 func New(options Options) *Server {
-	if options.Registry == nil {
-		options.Registry = handler.NewHandlerRegistry()
+	// Start with default options
+	defaultOpts := DefaultOptions()
+
+	// Override with provided options
+	if options.Name != "" {
+		defaultOpts.Name = options.Name
 	}
-	
-	if options.Transport == nil {
-		options.Transport = transport.NewStdioTransport()
+	if options.Version != "" {
+		defaultOpts.Version = options.Version
+	}
+	if options.Registry != nil {
+		defaultOpts.Registry = options.Registry
+	}
+	if options.Transport != nil {
+		defaultOpts.Transport = options.Transport
 	}
 
 	return &Server{
-		options:   options,
-		registry:  options.Registry,
-		transport: options.Transport,
+		options:   defaultOpts,
+		registry:  defaultOpts.Registry,
+		transport: defaultOpts.Transport,
 	}
 }
 
