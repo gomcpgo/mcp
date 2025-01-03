@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -19,7 +20,6 @@ type testTransport struct {
 }
 
 func setupTestTransport() (*testTransport, error) {
-	// Create pipes for stdin and stdout
 	inReader, inWriter, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -41,10 +41,18 @@ func setupTestTransport() (*testTransport, error) {
 }
 
 func (t *testTransport) cleanup() {
-	t.inReader.Close()
-	t.inWriter.Close()
-	t.outReader.Close()
-	t.outWriter.Close()
+	if t.inReader != nil {
+		t.inReader.Close()
+	}
+	if t.inWriter != nil {
+		t.inWriter.Close()
+	}
+	if t.outReader != nil {
+		t.outReader.Close()
+	}
+	if t.outWriter != nil {
+		t.outWriter.Close()
+	}
 }
 
 func TestStdioTransport(t *testing.T) {
@@ -54,16 +62,14 @@ func TestStdioTransport(t *testing.T) {
 	}
 	defer tp.cleanup()
 
-	// Create transport
 	transport := &StdioTransport{
 		encoder:  json.NewEncoder(tp.outWriter),
 		decoder:  json.NewDecoder(tp.inReader),
-		requests: make(chan *protocol.Request),
-		errors:   make(chan error),
+		requests: make(chan *protocol.Request, 10), // Buffered channels
+		errors:   make(chan error, 10),
 		done:     make(chan struct{}),
 	}
 
-	// Start transport with cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -71,7 +77,7 @@ func TestStdioTransport(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	// Test sending a request
+	// Test valid request
 	testRequest := &protocol.Request{
 		JSONRPC: "2.0",
 		ID:      1,
@@ -79,13 +85,10 @@ func TestStdioTransport(t *testing.T) {
 		Params:  json.RawMessage(`{"test":"value"}`),
 	}
 
-	go func() {
-		if err := json.NewEncoder(tp.inWriter).Encode(testRequest); err != nil {
-			t.Errorf("Failed to write test request: %v", err)
-		}
-	}()
+	if err := json.NewEncoder(tp.inWriter).Encode(testRequest); err != nil {
+		t.Fatalf("Failed to write test request: %v", err)
+	}
 
-	// Wait for request or timeout
 	select {
 	case req := <-transport.Receive():
 		if req.JSONRPC != testRequest.JSONRPC {
@@ -100,14 +103,11 @@ func TestStdioTransport(t *testing.T) {
 		t.Fatal("timeout waiting for request")
 	}
 
-	// Test invalid JSON
-	go func() {
-		if _, err := tp.inWriter.Write([]byte("invalid json\n")); err != nil {
-			t.Errorf("Failed to write invalid JSON: %v", err)
-		}
-	}()
+	// Test invalid request
+	if _, err := io.WriteString(tp.inWriter, "invalid json\n"); err != nil {
+		t.Fatalf("Failed to write invalid JSON: %v", err)
+	}
 
-	// Wait for error or timeout
 	select {
 	case err := <-transport.Errors():
 		if !strings.Contains(err.Error(), "decode error") {
@@ -117,31 +117,53 @@ func TestStdioTransport(t *testing.T) {
 		t.Fatal("timeout waiting for error")
 	}
 
-	// Test shutdown
-	cancel()
-	time.Sleep(50 * time.Millisecond) // Give time for shutdown
+	// Test response
+	resp := &protocol.Response{
+		JSONRPC: "2.0",
+		ID:      1,
+		Result:  "test result",
+	}
 
-	// Verify channels are closed
+	if err := transport.Send(resp); err != nil {
+		t.Errorf("Send() error = %v", err)
+	}
+
+	// Test graceful shutdown
+	if err := transport.Stop(ctx); err != nil {
+		t.Errorf("Stop() error = %v", err)
+	}
+
+	// Test send after shutdown
+	if err := transport.Send(resp); err == nil {
+		t.Error("Send() should return error after shutdown")
+	} else if !strings.Contains(err.Error(), "transport is closed") {
+		t.Errorf("expected 'transport is closed' error, got: %v", err)
+	}
+
+	// Wait for channels to close
+	time.Sleep(50 * time.Millisecond)
+
+	// Try reading from closed channels
 	select {
 	case _, ok := <-transport.Receive():
 		if ok {
-			t.Error("receive channel should be closed")
+			t.Error("request channel should be closed")
 		}
-	case <-time.After(50 * time.Millisecond):
-		t.Error("timeout waiting for receive channel to close")
+	default:
+		t.Error("request channel should be closed")
 	}
 
 	select {
 	case _, ok := <-transport.Errors():
 		if ok {
-			t.Error("errors channel should be closed")
+			t.Error("error channel should be closed")
 		}
-	case <-time.After(50 * time.Millisecond):
-		t.Error("timeout waiting for errors channel to close")
+	default:
+		t.Error("error channel should be closed")
 	}
 }
 
-func TestTransportShutdown(t *testing.T) {
+func TestTransportEOF(t *testing.T) {
 	tp, err := setupTestTransport()
 	if err != nil {
 		t.Fatalf("Failed to set up test transport: %v", err)
@@ -151,21 +173,26 @@ func TestTransportShutdown(t *testing.T) {
 	transport := &StdioTransport{
 		encoder:  json.NewEncoder(tp.outWriter),
 		decoder:  json.NewDecoder(tp.inReader),
-		requests: make(chan *protocol.Request),
-		errors:   make(chan error),
+		requests: make(chan *protocol.Request, 10),
+		errors:   make(chan error, 10),
 		done:     make(chan struct{}),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	if err := transport.Start(ctx); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	// Test clean shutdown
-	cancel()
+	// Close input to simulate EOF
+	tp.inWriter.Close()
+
+	// Wait for EOF to be processed
 	time.Sleep(50 * time.Millisecond)
 
+	// Try to send after EOF
 	if err := transport.Send(&protocol.Response{}); err == nil {
-		t.Error("Send() should return error after shutdown")
+		t.Error("Send() should return error after EOF")
 	}
 }
