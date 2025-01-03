@@ -37,13 +37,16 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	return nil
 }
 
-func (t *StdioTransport) Stop(ctx context.Context) error {
+func (t *StdioTransport) Stop(_ context.Context) error {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	
 	if !t.isClosed {
 		t.isClosed = true
 		close(t.done)
+		close(t.requests)
+		close(t.errors)
 	}
-	t.mu.Unlock()
 	return nil
 }
 
@@ -54,6 +57,7 @@ func (t *StdioTransport) Send(response *protocol.Response) error {
 		return fmt.Errorf("transport is closed")
 	}
 	t.mu.RUnlock()
+
 	return t.encoder.Encode(response)
 }
 
@@ -66,15 +70,7 @@ func (t *StdioTransport) Errors() <-chan error {
 }
 
 func (t *StdioTransport) readLoop(ctx context.Context) {
-	defer func() {
-		t.mu.Lock()
-		if !t.isClosed {
-			t.isClosed = true
-			close(t.requests)
-			close(t.errors)
-		}
-		t.mu.Unlock()
-	}()
+	defer t.Stop(ctx)
 
 	for {
 		select {
@@ -90,47 +86,47 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 				return
 			}
 
+			t.mu.RLock()
+			isClosed := t.isClosed
+			t.mu.RUnlock()
+
+			if isClosed {
+				return
+			}
+
 			if err != nil {
-				t.mu.RLock()
-				if !t.isClosed {
-					select {
-					case t.errors <- fmt.Errorf("decode error: %w", err):
-					default:
-						log.Printf("Error decoding request: %v", err)
-					}
+				select {
+				case t.errors <- fmt.Errorf("decode error: %w", err):
+				case <-ctx.Done():
+					return
+				case <-t.done:
+					return
+				default:
+					log.Printf("Error decoding request: %v", err)
 				}
-				t.mu.RUnlock()
 				continue
 			}
 
 			if request.JSONRPC != "2.0" {
-				t.mu.RLock()
-				if !t.isClosed {
-					select {
-					case t.errors <- fmt.Errorf("invalid JSON-RPC version: %s", request.JSONRPC):
-					default:
-						log.Printf("Invalid JSON-RPC version: %s", request.JSONRPC)
-					}
+				select {
+				case t.errors <- fmt.Errorf("invalid JSON-RPC version: %s", request.JSONRPC):
+				case <-ctx.Done():
+					return
+				case <-t.done:
+					return
+				default:
+					log.Printf("Invalid JSON-RPC version: %s", request.JSONRPC)
 				}
-				t.mu.RUnlock()
 				continue
 			}
 
-			t.mu.RLock()
-			if !t.isClosed {
-				select {
-				case t.requests <- &request:
-				case <-ctx.Done():
-					t.mu.RUnlock()
-					return
-				case <-t.done:
-					t.mu.RUnlock()
-					return
-				default:
-					log.Printf("Request channel full, dropping request")
-				}
+			select {
+			case t.requests <- &request:
+			case <-ctx.Done():
+				return
+			case <-t.done:
+				return
 			}
-			t.mu.RUnlock()
 		}
 	}
 }
