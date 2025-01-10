@@ -13,8 +13,8 @@ import (
 
 // Server represents an MCP server instance
 type Server struct {
-	options  Options
-	registry *handler.HandlerRegistry
+	options   Options
+	registry  *handler.HandlerRegistry
 	transport transport.Transport
 }
 
@@ -77,15 +77,25 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 	var result interface{}
 	var err error
 
+	log.Printf("MCP server req received:\n%v\n", PrettyJSON(req))
+
 	switch req.Method {
 	case protocol.MethodInitialize:
 		result, err = s.handleInitialize(ctx, req.Params)
+
+	case protocol.MethodInitialized, protocol.NotificationInitialized:
+		log.Printf("Server initialized successfully")
+		// Initialization notification, no response needed
+		return
 
 	case protocol.MethodToolsList:
 		if s.registry.HasToolHandler() {
 			result, err = s.registry.GetToolHandler().ListTools(ctx)
 		} else {
-			err = fmt.Errorf("tools not supported")
+			// Return empty list instead of error
+			result = &protocol.ListToolsResponse{
+				Tools: []protocol.Tool{},
+			}
 		}
 
 	case protocol.MethodToolsCall:
@@ -104,7 +114,10 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 		if s.registry.HasResourceHandler() {
 			result, err = s.registry.GetResourceHandler().ListResources(ctx)
 		} else {
-			err = fmt.Errorf("resources not supported")
+			// Return empty list instead of error
+			result = &protocol.ListResourcesResponse{
+				Resources: []protocol.Resource{},
+			}
 		}
 
 	case protocol.MethodResourcesRead:
@@ -123,7 +136,10 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 		if s.registry.HasPromptHandler() {
 			result, err = s.registry.GetPromptHandler().ListPrompts(ctx)
 		} else {
-			err = fmt.Errorf("prompts not supported")
+			// Return empty list instead of error
+			result = &protocol.ListPromptsResponse{
+				Prompts: []protocol.Prompt{},
+			}
 		}
 
 	case protocol.MethodPromptsGet:
@@ -137,10 +153,6 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 		} else {
 			err = fmt.Errorf("prompts not supported")
 		}
-
-	case protocol.MethodInitialized:
-		// Initialization notification, no response needed
-		return
 
 	default:
 		err = fmt.Errorf("unknown method: %s", req.Method)
@@ -190,6 +202,7 @@ func (s *Server) sendResponse(id interface{}, result interface{}) {
 		Result:  result,
 	}
 
+	log.Printf("MCP server response:\n%v\n", PrettyJSON(response))
 	if err := s.transport.Send(response); err != nil {
 		log.Printf("Error sending response: %v", err)
 	}
@@ -206,6 +219,7 @@ func (s *Server) sendError(id interface{}, code int, message string) {
 		},
 	}
 
+	log.Printf("MCP server error response:\n%v\n", PrettyJSON(response))
 	if err := s.transport.Send(response); err != nil {
 		log.Printf("Error sending error response: %v", err)
 	}

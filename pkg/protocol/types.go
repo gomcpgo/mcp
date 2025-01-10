@@ -150,15 +150,16 @@ type MessageContent struct {
 
 // Constants
 const (
-	Version             = "2024-11-05"
-	MethodInitialize    = "initialize"
-	MethodInitialized   = "initialized"
-	MethodToolsList     = "tools/list"
-	MethodToolsCall     = "tools/call"
-	MethodResourcesList = "resources/list"
-	MethodResourcesRead = "resources/read"
-	MethodPromptsList   = "prompts/list"
-	MethodPromptsGet    = "prompts/get"
+	Version                 = "2024-11-05"
+	MethodInitialize        = "initialize"
+	NotificationInitialized = "notifications/initialized"
+	MethodInitialized       = "initialized"
+	MethodToolsList         = "tools/list"
+	MethodToolsCall         = "tools/call"
+	MethodResourcesList     = "resources/list"
+	MethodResourcesRead     = "resources/read"
+	MethodPromptsList       = "prompts/list"
+	MethodPromptsGet        = "prompts/get"
 )
 
 // Error codes as per JSON-RPC 2.0
