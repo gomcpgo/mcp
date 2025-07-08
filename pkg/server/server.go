@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gomcpgo/mcp/pkg/handler"
 	"github.com/gomcpgo/mcp/pkg/protocol"
@@ -55,17 +56,21 @@ func (s *Server) Run() error {
 	defer s.transport.Stop(ctx)
 
 	// Process requests
+	log.Printf("[SERVER] Starting request processing loop")
+	requestCount := 0
 	for {
 		select {
 		case err := <-s.transport.Errors():
-			log.Printf("Transport error: %v", err)
+			log.Printf("[SERVER] Transport error: %v", err)
 			continue
 
 		case req := <-s.transport.Receive():
 			if req == nil {
-				log.Printf("Received nil request, shutting down")
+				log.Printf("[SERVER] Received nil request after %d requests, shutting down", requestCount)
 				return nil
 			}
+			requestCount++
+			log.Printf("[SERVER] Received request #%d: method=%s", requestCount, req.Method)
 
 			go s.handleRequest(ctx, req)
 		}
@@ -76,6 +81,12 @@ func (s *Server) Run() error {
 func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 	var result interface{}
 	var err error
+
+	log.Printf("[SERVER] Processing request: method=%s, id=%v", req.Method, req.ID)
+	startTime := time.Now()
+	defer func() {
+		log.Printf("[SERVER] Request completed: method=%s, id=%v, duration=%v", req.Method, req.ID, time.Since(startTime))
+	}()
 
 	log.Printf("MCP server req received:\n%v\n", PrettyJSON(req))
 

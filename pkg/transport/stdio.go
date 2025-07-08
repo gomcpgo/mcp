@@ -42,10 +42,13 @@ func (t *StdioTransport) Stop(_ context.Context) error {
 	defer t.mu.Unlock()
 	
 	if !t.isClosed {
+		log.Printf("[STDIO] Stopping transport - closing channels")
 		t.isClosed = true
 		close(t.done)
 		close(t.requests)
 		close(t.errors)
+	} else {
+		log.Printf("[STDIO] Stop called but transport already closed")
 	}
 	return nil
 }
@@ -71,18 +74,22 @@ func (t *StdioTransport) Errors() <-chan error {
 
 func (t *StdioTransport) readLoop(ctx context.Context) {
 	defer t.Stop(ctx)
+	log.Printf("[STDIO] Starting readLoop")
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("[STDIO] readLoop: context cancelled")
 			return
 		case <-t.done:
+			log.Printf("[STDIO] readLoop: done channel closed")
 			return
 		default:
 			var request protocol.Request
 			err := t.decoder.Decode(&request)
 
 			if err == io.EOF {
+				log.Printf("[STDIO] readLoop: EOF received on stdin")
 				return
 			}
 
@@ -95,6 +102,7 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 			}
 
 			if err != nil {
+				log.Printf("[STDIO] readLoop: decode error: %v", err)
 				select {
 				case t.errors <- fmt.Errorf("decode error: %w", err):
 				case <-ctx.Done():
@@ -102,7 +110,7 @@ func (t *StdioTransport) readLoop(ctx context.Context) {
 				case <-t.done:
 					return
 				default:
-					log.Printf("Error decoding request: %v", err)
+					log.Printf("[STDIO] Error decoding request: %v", err)
 				}
 				continue
 			}
