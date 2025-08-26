@@ -2,6 +2,7 @@ package async
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -34,6 +35,7 @@ func (r *OperationRegistry) Add(op *Operation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.operations[op.ID] = op
+	log.Printf("[REGISTRY] Added operation %s (type: %s, status: %s)", op.ID, op.Type, op.Status)
 }
 
 // Get retrieves an operation by ID
@@ -43,10 +45,21 @@ func (r *OperationRegistry) Get(id string) (*Operation, error) {
 	
 	op, exists := r.operations[id]
 	if !exists {
+		log.Printf("[REGISTRY] Operation %s not found. Current operations: %v", id, r.getOperationIDs())
 		return nil, fmt.Errorf("operation not found: %s", id)
 	}
 	
+	log.Printf("[REGISTRY] Retrieved operation %s (type: %s, status: %s)", id, op.Type, op.Status)
 	return op, nil
+}
+
+// getOperationIDs returns all operation IDs (for debugging)
+func (r *OperationRegistry) getOperationIDs() []string {
+	ids := make([]string, 0, len(r.operations))
+	for id := range r.operations {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // Remove deletes an operation by ID

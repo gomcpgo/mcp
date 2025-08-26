@@ -3,6 +3,7 @@ package async
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -38,6 +39,7 @@ func NewExecutor(config ExecutorConfig) *OperationExecutor {
 func (e *OperationExecutor) Execute(ctx context.Context, operation OperationFunc, opts ExecuteOptions) (*ExecuteResult, error) {
 	// Generate operation ID
 	opID := generateID()
+	log.Printf("[ASYNC] Execute called for operation type: %s, generated ID: %s", opts.Type, opID)
 	
 	// Use default timeout if not specified
 	timeout := opts.Timeout
@@ -60,6 +62,7 @@ func (e *OperationExecutor) Execute(ctx context.Context, operation OperationFunc
 	
 	// Register the operation
 	e.registry.Add(op)
+	log.Printf("[ASYNC] Operation registered with ID: %s, type: %s", opID, opts.Type)
 	
 	// Start operation in goroutine
 	go func() {
@@ -97,6 +100,7 @@ func (e *OperationExecutor) Execute(ctx context.Context, operation OperationFunc
 		
 	case <-timeNow().After(timeout):
 		// Timeout - return processing status
+		log.Printf("[ASYNC] Operation %s timed out after %v, returning processing status", opID, timeout)
 		return &ExecuteResult{
 			Status:        StatusRunning,
 			OperationID:   opID,
@@ -118,11 +122,16 @@ func (e *OperationExecutor) Execute(ctx context.Context, operation OperationFunc
 
 // Continue checks or waits for operation completion
 func (e *OperationExecutor) Continue(ctx context.Context, operationID string, waitTime time.Duration) (*ContinueResult, error) {
+	log.Printf("[ASYNC] Continue called for operation ID: %s, waitTime: %v", operationID, waitTime)
+	
 	// Get the operation
 	op, err := e.registry.Get(operationID)
 	if err != nil {
+		log.Printf("[ASYNC] Operation %s not found in registry: %v", operationID, err)
 		return nil, err
 	}
+	
+	log.Printf("[ASYNC] Found operation %s with status: %s, type: %s", operationID, op.Status, op.Type)
 	
 	// Check current status
 	if op.Status != StatusRunning {
