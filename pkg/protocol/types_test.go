@@ -135,6 +135,63 @@ func TestResponseMarshaling(t *testing.T) {
 	}
 }
 
+func TestNotificationMarshaling(t *testing.T) {
+	n := Notification{
+		JSONRPC: "2.0",
+		Method:  "notifications/tools/list_changed",
+		Params:  json.RawMessage(`{"foo":"bar"}`),
+	}
+
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if _, hasID := parsed["id"]; hasID {
+		t.Error("Notification must not include an id field")
+	}
+	if parsed["method"] != "notifications/tools/list_changed" {
+		t.Errorf("method = %v, want notifications/tools/list_changed", parsed["method"])
+	}
+	if parsed["jsonrpc"] != "2.0" {
+		t.Errorf("jsonrpc = %v, want 2.0", parsed["jsonrpc"])
+	}
+}
+
+func TestNewNotification(t *testing.T) {
+	n, err := NewNotification("notifications/progress", map[string]interface{}{
+		"progressToken": "abc",
+		"progress":      0.5,
+	})
+	if err != nil {
+		t.Fatalf("NewNotification failed: %v", err)
+	}
+	if n.JSONRPC != "2.0" {
+		t.Errorf("JSONRPC = %q, want 2.0", n.JSONRPC)
+	}
+	if n.Method != "notifications/progress" {
+		t.Errorf("Method = %q, want notifications/progress", n.Method)
+	}
+	if len(n.Params) == 0 {
+		t.Error("Params should be populated")
+	}
+}
+
+func TestNewNotificationNilParams(t *testing.T) {
+	n, err := NewNotification("notifications/initialized", nil)
+	if err != nil {
+		t.Fatalf("NewNotification with nil params failed: %v", err)
+	}
+	if n.Method != "notifications/initialized" {
+		t.Errorf("Method = %q, want notifications/initialized", n.Method)
+	}
+}
+
 func TestProtocolVersion(t *testing.T) {
 	if Version != "2025-11-25" {
 		t.Errorf("Version = %q, want %q", Version, "2025-11-25")

@@ -17,6 +17,32 @@ type Response struct {
 	Error   *Error      `json:"error,omitempty"`
 }
 
+// Notification is a JSON-RPC 2.0 notification: method + optional params, no id.
+// Used for messages that do not expect a response (e.g. notifications/initialized,
+// notifications/tools/list_changed, notifications/progress).
+type Notification struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// NewNotification constructs a Notification with JSONRPC "2.0" and marshals
+// the given params. Pass nil for params to omit them.
+func NewNotification(method string, params interface{}) (*Notification, error) {
+	n := &Notification{
+		JSONRPC: "2.0",
+		Method:  method,
+	}
+	if params != nil {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		n.Params = raw
+	}
+	return n, nil
+}
+
 type Error struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`

@@ -79,14 +79,19 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 
 	log.Printf("MCP server req received:\n%v\n", PrettyJSON(req))
 
+	// Notifications (no id) do not receive a response. Dispatch any
+	// known notifications for logging/side-effects, then return without
+	// calling sendResponse/sendError.
+	if req.ID == nil {
+		if req.Method == protocol.MethodInitialized || req.Method == protocol.NotificationInitialized {
+			log.Printf("Server initialized successfully")
+		}
+		return
+	}
+
 	switch req.Method {
 	case protocol.MethodInitialize:
 		result, err = s.handleInitialize(ctx, req.Params)
-
-	case protocol.MethodInitialized, protocol.NotificationInitialized:
-		log.Printf("Server initialized successfully")
-		// Initialization notification, no response needed
-		return
 
 	case protocol.MethodToolsList:
 		if s.registry.HasToolHandler() {
@@ -192,6 +197,17 @@ func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*p
 		},
 		Capabilities: capabilities,
 	}, nil
+}
+
+// SendNotification sends a server-initiated notification to the client.
+// Used for events like notifications/tools/list_changed, notifications/progress,
+// notifications/message (logging), etc.
+func (s *Server) SendNotification(method string, params interface{}) error {
+	notification, err := protocol.NewNotification(method, params)
+	if err != nil {
+		return fmt.Errorf("failed to build notification: %w", err)
+	}
+	return s.transport.SendNotification(notification)
 }
 
 // sendResponse sends a successful response

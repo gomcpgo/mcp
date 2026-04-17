@@ -12,16 +12,18 @@ import (
 
 // Mock transport for testing
 type mockTransport struct {
-	requests  chan *protocol.Request
-	errors    chan error
-	responses []*protocol.Response
+	requests      chan *protocol.Request
+	errors        chan error
+	responses     []*protocol.Response
+	notifications []*protocol.Notification
 }
 
 func newMockTransport() *mockTransport {
 	return &mockTransport{
-		requests:  make(chan *protocol.Request, 10),
-		errors:    make(chan error, 10),
-		responses: make([]*protocol.Response, 0),
+		requests:      make(chan *protocol.Request, 10),
+		errors:        make(chan error, 10),
+		responses:     make([]*protocol.Response, 0),
+		notifications: make([]*protocol.Notification, 0),
 	}
 }
 
@@ -37,6 +39,11 @@ func (t *mockTransport) Stop(ctx context.Context) error {
 
 func (t *mockTransport) Send(response *protocol.Response) error {
 	t.responses = append(t.responses, response)
+	return nil
+}
+
+func (t *mockTransport) SendNotification(notification *protocol.Notification) error {
+	t.notifications = append(t.notifications, notification)
 	return nil
 }
 
@@ -60,6 +67,58 @@ func (h *mockToolHandler) ListTools(ctx context.Context) (*protocol.ListToolsRes
 
 func (h *mockToolHandler) CallTool(ctx context.Context, req *protocol.CallToolRequest) (*protocol.CallToolResponse, error) {
 	return h.result, nil
+}
+
+func TestServerNoResponseForNotification(t *testing.T) {
+	mockTransport := newMockTransport()
+	registry := handler.NewHandlerRegistry()
+	srv := New(Options{
+		Name:      "test-server",
+		Version:   "1.0.0",
+		Registry:  registry,
+		Transport: mockTransport,
+	})
+	go srv.Run()
+
+	// Send a notification (no ID) — server must not reply
+	mockTransport.requests <- &protocol.Request{
+		JSONRPC: "2.0",
+		ID:      nil,
+		Method:  "notifications/something_unknown",
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if len(mockTransport.responses) != 0 {
+		t.Errorf("server sent %d responses for a notification; should send none",
+			len(mockTransport.responses))
+	}
+}
+
+func TestServerSendNotification(t *testing.T) {
+	mockTransport := newMockTransport()
+	registry := handler.NewHandlerRegistry()
+	srv := New(Options{
+		Name:      "test-server",
+		Version:   "1.0.0",
+		Registry:  registry,
+		Transport: mockTransport,
+	})
+
+	if err := srv.SendNotification("notifications/tools/list_changed", nil); err != nil {
+		t.Fatalf("SendNotification returned error: %v", err)
+	}
+
+	if len(mockTransport.notifications) != 1 {
+		t.Fatalf("expected 1 notification sent, got %d", len(mockTransport.notifications))
+	}
+	n := mockTransport.notifications[0]
+	if n.Method != "notifications/tools/list_changed" {
+		t.Errorf("method = %q, want notifications/tools/list_changed", n.Method)
+	}
+	if n.JSONRPC != "2.0" {
+		t.Errorf("jsonrpc = %q, want 2.0", n.JSONRPC)
+	}
 }
 
 func TestInitializeVersionNegotiation(t *testing.T) {

@@ -61,6 +61,17 @@ func (t *StdioTransport) Send(response *protocol.Response) error {
 	return t.encoder.Encode(response)
 }
 
+func (t *StdioTransport) SendNotification(notification *protocol.Notification) error {
+	t.mu.RLock()
+	if t.isClosed {
+		t.mu.RUnlock()
+		return fmt.Errorf("transport is closed")
+	}
+	t.mu.RUnlock()
+
+	return t.encoder.Encode(notification)
+}
+
 func (t *StdioTransport) Receive() <-chan *protocol.Request {
 	return t.requests
 }

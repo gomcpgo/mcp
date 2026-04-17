@@ -2,12 +2,68 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/gomcpgo/mcp/pkg/protocol"
 )
+
+func TestStdioSendNotification(t *testing.T) {
+	// Capture stdout via pipe
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = pw
+	defer func() { os.Stdout = oldStdout }()
+
+	transport := NewStdioTransport()
+
+	notif, err := protocol.NewNotification("notifications/tools/list_changed", nil)
+	if err != nil {
+		t.Fatalf("NewNotification: %v", err)
+	}
+
+	if err := transport.SendNotification(notif); err != nil {
+		t.Fatalf("SendNotification: %v", err)
+	}
+
+	// Close write end so reader sees EOF after the single message
+	pw.Close()
+	data, err := io.ReadAll(pr)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal output %q: %v", string(data), err)
+	}
+
+	if _, hasID := decoded["id"]; hasID {
+		t.Errorf("notification output must not contain id field: %s", string(data))
+	}
+	if decoded["method"] != "notifications/tools/list_changed" {
+		t.Errorf("method = %v, want notifications/tools/list_changed", decoded["method"])
+	}
+	if decoded["jsonrpc"] != "2.0" {
+		t.Errorf("jsonrpc = %v, want 2.0", decoded["jsonrpc"])
+	}
+}
+
+func TestStdioSendNotificationAfterClose(t *testing.T) {
+	transport := NewStdioTransport()
+	_ = transport.Stop(context.Background())
+
+	notif, _ := protocol.NewNotification("notifications/initialized", nil)
+	if err := transport.SendNotification(notif); err == nil {
+		t.Error("SendNotification should return error after transport is closed")
+	}
+}
 
 /*
 func TestStdioTransport(t *testing.T) {
