@@ -62,6 +62,126 @@ func (h *mockToolHandler) CallTool(ctx context.Context, req *protocol.CallToolRe
 	return h.result, nil
 }
 
+func TestInitializeVersionNegotiation(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientVersion   string
+		wantVersion     string
+	}{
+		{
+			name:          "client requests latest supported",
+			clientVersion: "2025-11-25",
+			wantVersion:   "2025-11-25",
+		},
+		{
+			name:          "client requests legacy supported",
+			clientVersion: "2024-11-05",
+			wantVersion:   "2024-11-05",
+		},
+		{
+			name:          "client requests unsupported version - server responds latest",
+			clientVersion: "1999-01-01",
+			wantVersion:   "2025-11-25",
+		},
+		{
+			name:          "empty version - server responds latest",
+			clientVersion: "",
+			wantVersion:   "2025-11-25",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockTransport := newMockTransport()
+			registry := handler.NewHandlerRegistry()
+			srv := New(Options{
+				Name:      "test-server",
+				Version:   "1.0.0",
+				Registry:  registry,
+				Transport: mockTransport,
+			})
+
+			go srv.Run()
+
+			params := map[string]interface{}{
+				"protocolVersion": tt.clientVersion,
+				"clientInfo":      map[string]string{"name": "test-client", "version": "1.0.0"},
+				"capabilities":    map[string]interface{}{},
+			}
+			paramsJSON, _ := json.Marshal(params)
+
+			mockTransport.requests <- &protocol.Request{
+				JSONRPC: "2.0",
+				ID:      1,
+				Method:  protocol.MethodInitialize,
+				Params:  paramsJSON,
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if len(mockTransport.responses) == 0 {
+				t.Fatal("no response received")
+			}
+
+			resp := mockTransport.responses[0]
+			if resp.Error != nil {
+				t.Fatalf("unexpected error: %v", resp.Error)
+			}
+
+			result, ok := resp.Result.(*protocol.InitializeResponse)
+			if !ok {
+				t.Fatalf("result is not InitializeResponse: %T", resp.Result)
+			}
+
+			if result.ProtocolVersion != tt.wantVersion {
+				t.Errorf("ProtocolVersion = %q, want %q", result.ProtocolVersion, tt.wantVersion)
+			}
+		})
+	}
+}
+
+func TestInitializeParsesClientInfo(t *testing.T) {
+	mockTransport := newMockTransport()
+	registry := handler.NewHandlerRegistry()
+	srv := New(Options{
+		Name:      "test-server",
+		Version:   "1.0.0",
+		Registry:  registry,
+		Transport: mockTransport,
+	})
+
+	go srv.Run()
+
+	params := map[string]interface{}{
+		"protocolVersion": "2025-11-25",
+		"clientInfo":      map[string]string{"name": "my-client", "version": "2.3.4"},
+		"capabilities":    map[string]interface{}{},
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	mockTransport.requests <- &protocol.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  protocol.MethodInitialize,
+		Params:  paramsJSON,
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if len(mockTransport.responses) == 0 {
+		t.Fatal("no response received")
+	}
+	resp := mockTransport.responses[0]
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+
+	result := resp.Result.(*protocol.InitializeResponse)
+	if result.ServerInfo.Name != "test-server" {
+		t.Errorf("ServerInfo.Name = %q, want %q", result.ServerInfo.Name, "test-server")
+	}
+}
+
 func TestServer(t *testing.T) {
 	// Create mock transport
 	mockTransport := newMockTransport()

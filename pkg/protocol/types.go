@@ -36,20 +36,34 @@ type Capabilities struct {
 }
 
 type ToolsInfo struct {
-	// Tool-specific capabilities
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type ResourcesInfo struct {
-	// Resource-specific capabilities
+	Subscribe   bool `json:"subscribe,omitempty"`
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type PromptsInfo struct {
-	// Prompt-specific capabilities
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// ClientInfo identifies the MCP client making the connection
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// ClientCapabilities are the capabilities declared by the client
+type ClientCapabilities struct {
+	// Intentionally minimal — will expand when elicitation, sampling, etc. are added
 }
 
 // Initialize types
 type InitializeRequest struct {
-	// Initialization parameters (can be extended)
+	ProtocolVersion string             `json:"protocolVersion"`
+	ClientInfo      ClientInfo         `json:"clientInfo"`
+	Capabilities    ClientCapabilities `json:"capabilities"`
 }
 
 type InitializeResponse struct {
@@ -150,7 +164,7 @@ type MessageContent struct {
 
 // Constants
 const (
-	Version                 = "2024-11-05"
+	Version                 = "2025-11-25"
 	MethodInitialize        = "initialize"
 	NotificationInitialized = "notifications/initialized"
 	MethodInitialized       = "initialized"
@@ -161,6 +175,25 @@ const (
 	MethodPromptsList       = "prompts/list"
 	MethodPromptsGet        = "prompts/get"
 )
+
+// SupportedVersions lists protocol versions this server framework can handle.
+// Ordered latest-first; used for version negotiation during initialize.
+var SupportedVersions = []string{
+	"2025-11-25",
+	"2024-11-05",
+}
+
+// NegotiateVersion returns the version to use in the initialize response.
+// If the client's requested version is supported, return it; otherwise return
+// the server's latest supported version and let the client decide to proceed.
+func NegotiateVersion(clientVersion string) string {
+	for _, v := range SupportedVersions {
+		if v == clientVersion {
+			return v
+		}
+	}
+	return SupportedVersions[0]
+}
 
 // Error codes as per JSON-RPC 2.0
 const (

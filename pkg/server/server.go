@@ -167,7 +167,7 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 }
 
 // handleInitialize processes initialization requests
-func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (*protocol.InitializeResponse, error) {
+func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*protocol.InitializeResponse, error) {
 	var initReq protocol.InitializeRequest
 	if err := json.Unmarshal(params, &initReq); err != nil {
 		return nil, fmt.Errorf("invalid initialization parameters: %w", err)
@@ -185,7 +185,7 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 	}
 
 	return &protocol.InitializeResponse{
-		ProtocolVersion: protocol.Version,
+		ProtocolVersion: protocol.NegotiateVersion(initReq.ProtocolVersion),
 		ServerInfo: protocol.ServerInfo{
 			Name:    s.options.Name,
 			Version: s.options.Version,
