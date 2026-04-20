@@ -100,9 +100,35 @@ type InitializeResponse struct {
 
 // Tool types
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name         string                 `json:"name"`
+	Title        string                 `json:"title,omitempty"`
+	Description  string                 `json:"description"`
+	InputSchema  json.RawMessage        `json:"inputSchema"`
+	OutputSchema json.RawMessage        `json:"outputSchema,omitempty"`
+	Annotations  *ToolAnnotations       `json:"annotations,omitempty"`
+	Icons        []Icon                 `json:"icons,omitempty"`
+	Meta         map[string]interface{} `json:"_meta,omitempty"`
+}
+
+// ToolAnnotations carry optional hints about a tool's behaviour. Pointer
+// fields distinguish "unset" from an explicit boolean value, which matters
+// because the MCP spec defines permissive defaults (e.g. destructiveHint
+// defaults to true when absent); Savant only acts on explicit true values
+// and treats unset as "no hint".
+type ToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
+// Icon describes an optional visual representation of a tool. Clients may
+// choose among multiple Icons based on the Sizes field (e.g. "48x48").
+type Icon struct {
+	Src      string `json:"src"`
+	MimeType string `json:"mimeType,omitempty"`
+	Sizes    string `json:"sizes,omitempty"`
 }
 
 type ListToolsResponse struct {
@@ -115,8 +141,10 @@ type CallToolRequest struct {
 }
 
 type CallToolResponse struct {
-	Content []ToolContent `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	Content           []ToolContent          `json:"content"`
+	StructuredContent map[string]interface{} `json:"structuredContent,omitempty"`
+	IsError           bool                   `json:"isError,omitempty"`
+	Meta              map[string]interface{} `json:"_meta,omitempty"`
 }
 
 type ToolContent struct {
