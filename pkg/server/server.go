@@ -16,6 +16,7 @@ type Server struct {
 	options   Options
 	registry  *handler.HandlerRegistry
 	transport transport.Transport
+	tracker   *requestTracker
 }
 
 // New creates a new MCP server instance with the provided options
@@ -41,6 +42,7 @@ func New(options Options) *Server {
 		options:   defaultOpts,
 		registry:  defaultOpts.Registry,
 		transport: defaultOpts.Transport,
+		tracker:   newRequestTracker(),
 	}
 }
 
@@ -73,94 +75,31 @@ func (s *Server) Run() error {
 }
 
 // handleRequest processes individual requests
-func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
-	var result interface{}
-	var err error
-
+func (s *Server) handleRequest(parent context.Context, req *protocol.Request) {
 	log.Printf("MCP server req received:\n%v\n", PrettyJSON(req))
 
-	// Notifications (no id) do not receive a response. Dispatch any
-	// known notifications for logging/side-effects, then return without
-	// calling sendResponse/sendError.
+	// Notifications (no id) do not receive a response.
 	if req.ID == nil {
-		if req.Method == protocol.MethodInitialized || req.Method == protocol.NotificationInitialized {
-			log.Printf("Server initialized successfully")
-		}
+		s.handleNotification(req)
 		return
 	}
 
-	switch req.Method {
-	case protocol.MethodInitialize:
-		result, err = s.handleInitialize(ctx, req.Params)
+	// Give the handler a cancellable context so an inbound
+	// notifications/cancelled for this ID can stop it mid-flight.
+	ctx, cancel := s.tracker.register(parent, req.ID)
+	defer func() {
+		cancel()
+		s.tracker.unregister(req.ID)
+	}()
 
-	case protocol.MethodToolsList:
-		if s.registry.HasToolHandler() {
-			result, err = s.registry.GetToolHandler().ListTools(ctx)
-		} else {
-			// Return empty list instead of error
-			result = &protocol.ListToolsResponse{
-				Tools: []protocol.Tool{},
-			}
-		}
+	result, err := s.dispatchRequest(ctx, req)
 
-	case protocol.MethodToolsCall:
-		if s.registry.HasToolHandler() {
-			var toolReq protocol.CallToolRequest
-			if err := json.Unmarshal(req.Params, &toolReq); err != nil {
-				s.sendError(req.ID, protocol.InvalidParams, "Invalid tool parameters")
-				return
-			}
-			result, err = s.registry.GetToolHandler().CallTool(ctx, &toolReq)
-		} else {
-			err = fmt.Errorf("tools not supported")
-		}
-
-	case protocol.MethodResourcesList:
-		if s.registry.HasResourceHandler() {
-			result, err = s.registry.GetResourceHandler().ListResources(ctx)
-		} else {
-			// Return empty list instead of error
-			result = &protocol.ListResourcesResponse{
-				Resources: []protocol.Resource{},
-			}
-		}
-
-	case protocol.MethodResourcesRead:
-		if s.registry.HasResourceHandler() {
-			var resourceReq protocol.ReadResourceRequest
-			if err := json.Unmarshal(req.Params, &resourceReq); err != nil {
-				s.sendError(req.ID, protocol.InvalidParams, "Invalid resource parameters")
-				return
-			}
-			result, err = s.registry.GetResourceHandler().ReadResource(ctx, &resourceReq)
-		} else {
-			err = fmt.Errorf("resources not supported")
-		}
-
-	case protocol.MethodPromptsList:
-		if s.registry.HasPromptHandler() {
-			result, err = s.registry.GetPromptHandler().ListPrompts(ctx)
-		} else {
-			// Return empty list instead of error
-			result = &protocol.ListPromptsResponse{
-				Prompts: []protocol.Prompt{},
-			}
-		}
-
-	case protocol.MethodPromptsGet:
-		if s.registry.HasPromptHandler() {
-			var promptReq protocol.GetPromptRequest
-			if err := json.Unmarshal(req.Params, &promptReq); err != nil {
-				s.sendError(req.ID, protocol.InvalidParams, "Invalid prompt parameters")
-				return
-			}
-			result, err = s.registry.GetPromptHandler().GetPrompt(ctx, &promptReq)
-		} else {
-			err = fmt.Errorf("prompts not supported")
-		}
-
-	default:
-		err = fmt.Errorf("unknown method: %s", req.Method)
+	// If the client cancelled mid-flight, the handler's result (or error) is
+	// stale per MCP spec — suppress the response so we don't waste bytes or
+	// confuse the client.
+	if s.tracker.wasCancelled(req.ID) {
+		log.Printf("Request %v was cancelled; suppressing response", req.ID)
+		return
 	}
 
 	if err != nil {
@@ -169,6 +108,96 @@ func (s *Server) handleRequest(ctx context.Context, req *protocol.Request) {
 	}
 
 	s.sendResponse(req.ID, result)
+}
+
+// dispatchRequest routes a request to the appropriate handler based on method.
+func (s *Server) dispatchRequest(ctx context.Context, req *protocol.Request) (interface{}, error) {
+	switch req.Method {
+	case protocol.MethodInitialize:
+		return s.handleInitialize(ctx, req.Params)
+
+	case protocol.MethodToolsList:
+		if s.registry.HasToolHandler() {
+			return s.registry.GetToolHandler().ListTools(ctx)
+		}
+		return &protocol.ListToolsResponse{Tools: []protocol.Tool{}}, nil
+
+	case protocol.MethodToolsCall:
+		if !s.registry.HasToolHandler() {
+			return nil, fmt.Errorf("tools not supported")
+		}
+		var toolReq protocol.CallToolRequest
+		if err := json.Unmarshal(req.Params, &toolReq); err != nil {
+			// Caller expects sendError on invalid params — but returning an
+			// error here keeps the flow uniform; sendError will fire with
+			// InternalError. That's a minor downgrade from InvalidParams in
+			// exchange for a simpler control flow; if strict invalid-params
+			// signalling matters, we can add per-case overrides later.
+			return nil, fmt.Errorf("invalid tool parameters: %w", err)
+		}
+		return s.registry.GetToolHandler().CallTool(ctx, &toolReq)
+
+	case protocol.MethodResourcesList:
+		if s.registry.HasResourceHandler() {
+			return s.registry.GetResourceHandler().ListResources(ctx)
+		}
+		return &protocol.ListResourcesResponse{Resources: []protocol.Resource{}}, nil
+
+	case protocol.MethodResourcesRead:
+		if !s.registry.HasResourceHandler() {
+			return nil, fmt.Errorf("resources not supported")
+		}
+		var resourceReq protocol.ReadResourceRequest
+		if err := json.Unmarshal(req.Params, &resourceReq); err != nil {
+			return nil, fmt.Errorf("invalid resource parameters: %w", err)
+		}
+		return s.registry.GetResourceHandler().ReadResource(ctx, &resourceReq)
+
+	case protocol.MethodPromptsList:
+		if s.registry.HasPromptHandler() {
+			return s.registry.GetPromptHandler().ListPrompts(ctx)
+		}
+		return &protocol.ListPromptsResponse{Prompts: []protocol.Prompt{}}, nil
+
+	case protocol.MethodPromptsGet:
+		if !s.registry.HasPromptHandler() {
+			return nil, fmt.Errorf("prompts not supported")
+		}
+		var promptReq protocol.GetPromptRequest
+		if err := json.Unmarshal(req.Params, &promptReq); err != nil {
+			return nil, fmt.Errorf("invalid prompt parameters: %w", err)
+		}
+		return s.registry.GetPromptHandler().GetPrompt(ctx, &promptReq)
+
+	default:
+		return nil, fmt.Errorf("unknown method: %s", req.Method)
+	}
+}
+
+// handleNotification dispatches server-directed notifications. Notifications
+// never receive a response per JSON-RPC semantics.
+func (s *Server) handleNotification(req *protocol.Request) {
+	switch req.Method {
+	case protocol.MethodInitialized, protocol.NotificationInitialized:
+		log.Printf("Server initialized successfully")
+
+	case protocol.NotificationCancelled:
+		var params protocol.CancelledParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			log.Printf("Ignoring malformed notifications/cancelled: %v", err)
+			return
+		}
+		if s.tracker.cancel(params.RequestID) {
+			log.Printf("Request %v cancelled by client (reason: %q)", params.RequestID, params.Reason)
+		} else {
+			// No matching in-flight request; either it already completed or
+			// the client sent a stale/unknown ID. Either is benign per spec.
+			log.Printf("notifications/cancelled for unknown request id %v", params.RequestID)
+		}
+
+	default:
+		log.Printf("Ignoring unknown notification: %s", req.Method)
+	}
 }
 
 // handleInitialize processes initialization requests

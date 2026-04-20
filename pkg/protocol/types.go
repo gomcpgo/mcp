@@ -200,7 +200,18 @@ const (
 	MethodResourcesRead     = "resources/read"
 	MethodPromptsList       = "prompts/list"
 	MethodPromptsGet        = "prompts/get"
+
+	// NotificationCancelled is the MCP 2025-11-25 notifications/cancelled
+	// message a peer emits to tell the other side it has abandoned an
+	// in-flight request and the recipient should stop processing it.
+	NotificationCancelled = "notifications/cancelled"
 )
+
+// CancelledParams are the params carried by notifications/cancelled.
+type CancelledParams struct {
+	RequestID interface{} `json:"requestId"`
+	Reason    string      `json:"reason,omitempty"`
+}
 
 // SupportedVersions lists protocol versions this server framework can handle.
 // Ordered latest-first; used for version negotiation during initialize.

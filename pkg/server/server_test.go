@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,10 +11,13 @@ import (
 	"github.com/gomcpgo/mcp/pkg/protocol"
 )
 
-// Mock transport for testing
+// Mock transport for testing. Slices are guarded by `mu` so go test -race
+// stays clean when the Run() goroutine appends while the test reads.
 type mockTransport struct {
-	requests      chan *protocol.Request
-	errors        chan error
+	requests chan *protocol.Request
+	errors   chan error
+
+	mu            sync.Mutex
 	responses     []*protocol.Response
 	notifications []*protocol.Notification
 }
@@ -38,11 +42,15 @@ func (t *mockTransport) Stop(ctx context.Context) error {
 }
 
 func (t *mockTransport) Send(response *protocol.Response) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.responses = append(t.responses, response)
 	return nil
 }
 
 func (t *mockTransport) SendNotification(notification *protocol.Notification) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.notifications = append(t.notifications, notification)
 	return nil
 }
@@ -53,6 +61,38 @@ func (t *mockTransport) Receive() <-chan *protocol.Request {
 
 func (t *mockTransport) Errors() <-chan error {
 	return t.errors
+}
+
+// responsesSnapshot returns a copy of the current responses slice so tests
+// can read it without racing with Send.
+func (t *mockTransport) responsesSnapshot() []*protocol.Response {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]*protocol.Response, len(t.responses))
+	copy(out, t.responses)
+	return out
+}
+
+// responseCount returns the current number of responses captured.
+func (t *mockTransport) responseCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.responses)
+}
+
+// notificationCount returns the current number of notifications captured.
+func (t *mockTransport) notificationCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.notifications)
+}
+
+// responseAt returns the i-th response captured, under lock. Tests that index
+// before checking the count may index out of bounds; guard with responseCount.
+func (t *mockTransport) responseAt(i int) *protocol.Response {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.responses[i]
 }
 
 // Mock handlers for testing
@@ -89,9 +129,9 @@ func TestServerNoResponseForNotification(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if len(mockTransport.responses) != 0 {
+	if mockTransport.responseCount() != 0 {
 		t.Errorf("server sent %d responses for a notification; should send none",
-			len(mockTransport.responses))
+			mockTransport.responseCount())
 	}
 }
 
@@ -109,10 +149,12 @@ func TestServerSendNotification(t *testing.T) {
 		t.Fatalf("SendNotification returned error: %v", err)
 	}
 
-	if len(mockTransport.notifications) != 1 {
-		t.Fatalf("expected 1 notification sent, got %d", len(mockTransport.notifications))
+	if mockTransport.notificationCount() != 1 {
+		t.Fatalf("expected 1 notification sent, got %d", mockTransport.notificationCount())
 	}
+	mockTransport.mu.Lock()
 	n := mockTransport.notifications[0]
+	mockTransport.mu.Unlock()
 	if n.Method != "notifications/tools/list_changed" {
 		t.Errorf("method = %q, want notifications/tools/list_changed", n.Method)
 	}
@@ -178,11 +220,11 @@ func TestInitializeVersionNegotiation(t *testing.T) {
 
 			time.Sleep(100 * time.Millisecond)
 
-			if len(mockTransport.responses) == 0 {
+			if mockTransport.responseCount() == 0 {
 				t.Fatal("no response received")
 			}
 
-			resp := mockTransport.responses[0]
+			resp := mockTransport.responseAt(0)
 			if resp.Error != nil {
 				t.Fatalf("unexpected error: %v", resp.Error)
 			}
@@ -227,10 +269,10 @@ func TestInitializeParsesClientInfo(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if len(mockTransport.responses) == 0 {
+	if mockTransport.responseCount() == 0 {
 		t.Fatal("no response received")
 	}
-	resp := mockTransport.responses[0]
+	resp := mockTransport.responseAt(0)
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %v", resp.Error)
 	}
@@ -293,10 +335,10 @@ func TestServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify initialize response
-	if len(mockTransport.responses) == 0 {
+	if mockTransport.responseCount() == 0 {
 		t.Fatal("no response received")
 	}
-	initResp := mockTransport.responses[0]
+	initResp := mockTransport.responseAt(0)
 	if initResp.ID != initReq.ID {
 		t.Errorf("initialize response ID = %v, want %v", initResp.ID, initReq.ID)
 	}
@@ -313,10 +355,10 @@ func TestServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify list tools response
-	if len(mockTransport.responses) < 2 {
+	if mockTransport.responseCount() < 2 {
 		t.Fatal("no tools response received")
 	}
-	toolsResp := mockTransport.responses[1]
+	toolsResp := mockTransport.responseAt(1)
 	if toolsResp.ID != toolsReq.ID {
 		t.Errorf("tools response ID = %v, want %v", toolsResp.ID, toolsReq.ID)
 	}
@@ -337,10 +379,10 @@ func TestServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify call tool response
-	if len(mockTransport.responses) < 3 {
+	if mockTransport.responseCount() < 3 {
 		t.Fatal("no call tool response received")
 	}
-	callResp := mockTransport.responses[2]
+	callResp := mockTransport.responseAt(2)
 	if callResp.ID != callReq.ID {
 		t.Errorf("call tool response ID = %v, want %v", callResp.ID, callReq.ID)
 	}
@@ -357,10 +399,10 @@ func TestServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify error response
-	if len(mockTransport.responses) < 4 {
+	if mockTransport.responseCount() < 4 {
 		t.Fatal("no error response received")
 	}
-	errorResp := mockTransport.responses[3]
+	errorResp := mockTransport.responseAt(3)
 	if errorResp.ID != invalidReq.ID {
 		t.Errorf("error response ID = %v, want %v", errorResp.ID, invalidReq.ID)
 	}
@@ -380,10 +422,10 @@ func TestServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify error response
-	if len(mockTransport.responses) < 5 {
+	if mockTransport.responseCount() < 5 {
 		t.Fatal("no unknown method response received")
 	}
-	unknownResp := mockTransport.responses[4]
+	unknownResp := mockTransport.responseAt(4)
 	if unknownResp.ID != unknownReq.ID {
 		t.Errorf("unknown method response ID = %v, want %v", unknownResp.ID, unknownReq.ID)
 	}
