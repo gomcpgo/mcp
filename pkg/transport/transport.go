@@ -14,8 +14,11 @@ type Transport interface {
 	// Stop gracefully shuts down the transport
 	Stop(ctx context.Context) error
 
-	// Send sends a response or notification
+	// Send sends a response to a client request
 	Send(response *protocol.Response) error
+
+	// SendNotification sends a server-initiated notification to the client
+	SendNotification(notification *protocol.Notification) error
 
 	// Receive returns a channel that provides incoming requests
 	Receive() <-chan *protocol.Request

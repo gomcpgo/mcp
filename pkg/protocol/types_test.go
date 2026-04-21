@@ -135,6 +135,160 @@ func TestResponseMarshaling(t *testing.T) {
 	}
 }
 
+func TestNotificationMarshaling(t *testing.T) {
+	n := Notification{
+		JSONRPC: "2.0",
+		Method:  "notifications/tools/list_changed",
+		Params:  json.RawMessage(`{"foo":"bar"}`),
+	}
+
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if _, hasID := parsed["id"]; hasID {
+		t.Error("Notification must not include an id field")
+	}
+	if parsed["method"] != "notifications/tools/list_changed" {
+		t.Errorf("method = %v, want notifications/tools/list_changed", parsed["method"])
+	}
+	if parsed["jsonrpc"] != "2.0" {
+		t.Errorf("jsonrpc = %v, want 2.0", parsed["jsonrpc"])
+	}
+}
+
+func TestNewNotification(t *testing.T) {
+	n, err := NewNotification("notifications/progress", map[string]interface{}{
+		"progressToken": "abc",
+		"progress":      0.5,
+	})
+	if err != nil {
+		t.Fatalf("NewNotification failed: %v", err)
+	}
+	if n.JSONRPC != "2.0" {
+		t.Errorf("JSONRPC = %q, want 2.0", n.JSONRPC)
+	}
+	if n.Method != "notifications/progress" {
+		t.Errorf("Method = %q, want notifications/progress", n.Method)
+	}
+	if len(n.Params) == 0 {
+		t.Error("Params should be populated")
+	}
+}
+
+func TestNewNotificationNilParams(t *testing.T) {
+	n, err := NewNotification("notifications/initialized", nil)
+	if err != nil {
+		t.Fatalf("NewNotification with nil params failed: %v", err)
+	}
+	if n.Method != "notifications/initialized" {
+		t.Errorf("Method = %q, want notifications/initialized", n.Method)
+	}
+}
+
+func TestProtocolVersion(t *testing.T) {
+	if Version != "2025-11-25" {
+		t.Errorf("Version = %q, want %q", Version, "2025-11-25")
+	}
+}
+
+func TestSupportedVersions(t *testing.T) {
+	if len(SupportedVersions) == 0 {
+		t.Fatal("SupportedVersions must not be empty")
+	}
+
+	hasLatest := false
+	hasLegacy := false
+	for _, v := range SupportedVersions {
+		if v == "2025-11-25" {
+			hasLatest = true
+		}
+		if v == "2024-11-05" {
+			hasLegacy = true
+		}
+	}
+	if !hasLatest {
+		t.Error("SupportedVersions missing 2025-11-25")
+	}
+	if !hasLegacy {
+		t.Error("SupportedVersions missing 2024-11-05 (backward compat)")
+	}
+}
+
+func TestInitializeRequestUnmarshaling(t *testing.T) {
+	input := `{
+		"protocolVersion": "2025-11-25",
+		"clientInfo": {"name": "test-client", "version": "1.2.3"},
+		"capabilities": {}
+	}`
+
+	var req InitializeRequest
+	if err := json.Unmarshal([]byte(input), &req); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if req.ProtocolVersion != "2025-11-25" {
+		t.Errorf("ProtocolVersion = %q, want %q", req.ProtocolVersion, "2025-11-25")
+	}
+	if req.ClientInfo.Name != "test-client" {
+		t.Errorf("ClientInfo.Name = %q, want %q", req.ClientInfo.Name, "test-client")
+	}
+	if req.ClientInfo.Version != "1.2.3" {
+		t.Errorf("ClientInfo.Version = %q, want %q", req.ClientInfo.Version, "1.2.3")
+	}
+}
+
+func TestCapabilitiesListChanged(t *testing.T) {
+	caps := Capabilities{
+		Tools:     &ToolsInfo{ListChanged: true},
+		Resources: &ResourcesInfo{ListChanged: true, Subscribe: true},
+		Prompts:   &PromptsInfo{ListChanged: true},
+	}
+
+	data, err := json.Marshal(caps)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	tools, ok := parsed["tools"].(map[string]interface{})
+	if !ok {
+		t.Fatal("tools missing from capabilities")
+	}
+	if tools["listChanged"] != true {
+		t.Errorf("tools.listChanged = %v, want true", tools["listChanged"])
+	}
+
+	resources, ok := parsed["resources"].(map[string]interface{})
+	if !ok {
+		t.Fatal("resources missing from capabilities")
+	}
+	if resources["listChanged"] != true {
+		t.Errorf("resources.listChanged = %v, want true", resources["listChanged"])
+	}
+	if resources["subscribe"] != true {
+		t.Errorf("resources.subscribe = %v, want true", resources["subscribe"])
+	}
+
+	prompts, ok := parsed["prompts"].(map[string]interface{})
+	if !ok {
+		t.Fatal("prompts missing from capabilities")
+	}
+	if prompts["listChanged"] != true {
+		t.Errorf("prompts.listChanged = %v, want true", prompts["listChanged"])
+	}
+}
+
 func TestToolMarshaling(t *testing.T) {
 	tests := []struct {
 		name     string

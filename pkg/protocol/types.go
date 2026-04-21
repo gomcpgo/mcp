@@ -17,6 +17,32 @@ type Response struct {
 	Error   *Error      `json:"error,omitempty"`
 }
 
+// Notification is a JSON-RPC 2.0 notification: method + optional params, no id.
+// Used for messages that do not expect a response (e.g. notifications/initialized,
+// notifications/tools/list_changed, notifications/progress).
+type Notification struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// NewNotification constructs a Notification with JSONRPC "2.0" and marshals
+// the given params. Pass nil for params to omit them.
+func NewNotification(method string, params interface{}) (*Notification, error) {
+	n := &Notification{
+		JSONRPC: "2.0",
+		Method:  method,
+	}
+	if params != nil {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		n.Params = raw
+	}
+	return n, nil
+}
+
 type Error struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
@@ -36,20 +62,34 @@ type Capabilities struct {
 }
 
 type ToolsInfo struct {
-	// Tool-specific capabilities
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type ResourcesInfo struct {
-	// Resource-specific capabilities
+	Subscribe   bool `json:"subscribe,omitempty"`
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type PromptsInfo struct {
-	// Prompt-specific capabilities
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// ClientInfo identifies the MCP client making the connection
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// ClientCapabilities are the capabilities declared by the client
+type ClientCapabilities struct {
+	// Intentionally minimal — will expand when elicitation, sampling, etc. are added
 }
 
 // Initialize types
 type InitializeRequest struct {
-	// Initialization parameters (can be extended)
+	ProtocolVersion string             `json:"protocolVersion"`
+	ClientInfo      ClientInfo         `json:"clientInfo"`
+	Capabilities    ClientCapabilities `json:"capabilities"`
 }
 
 type InitializeResponse struct {
@@ -60,9 +100,35 @@ type InitializeResponse struct {
 
 // Tool types
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name         string                 `json:"name"`
+	Title        string                 `json:"title,omitempty"`
+	Description  string                 `json:"description"`
+	InputSchema  json.RawMessage        `json:"inputSchema"`
+	OutputSchema json.RawMessage        `json:"outputSchema,omitempty"`
+	Annotations  *ToolAnnotations       `json:"annotations,omitempty"`
+	Icons        []Icon                 `json:"icons,omitempty"`
+	Meta         map[string]interface{} `json:"_meta,omitempty"`
+}
+
+// ToolAnnotations carry optional hints about a tool's behaviour. Pointer
+// fields distinguish "unset" from an explicit boolean value, which matters
+// because the MCP spec defines permissive defaults (e.g. destructiveHint
+// defaults to true when absent); Savant only acts on explicit true values
+// and treats unset as "no hint".
+type ToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
+// Icon describes an optional visual representation of a tool. Clients may
+// choose among multiple Icons based on the Sizes field (e.g. "48x48").
+type Icon struct {
+	Src      string `json:"src"`
+	MimeType string `json:"mimeType,omitempty"`
+	Sizes    string `json:"sizes,omitempty"`
 }
 
 type ListToolsResponse struct {
@@ -75,8 +141,10 @@ type CallToolRequest struct {
 }
 
 type CallToolResponse struct {
-	Content []ToolContent `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	Content           []ToolContent          `json:"content"`
+	StructuredContent map[string]interface{} `json:"structuredContent,omitempty"`
+	IsError           bool                   `json:"isError,omitempty"`
+	Meta              map[string]interface{} `json:"_meta,omitempty"`
 }
 
 type ToolContent struct {
@@ -150,7 +218,7 @@ type MessageContent struct {
 
 // Constants
 const (
-	Version                 = "2024-11-05"
+	Version                 = "2025-11-25"
 	MethodInitialize        = "initialize"
 	NotificationInitialized = "notifications/initialized"
 	MethodInitialized       = "initialized"
@@ -160,7 +228,53 @@ const (
 	MethodResourcesRead     = "resources/read"
 	MethodPromptsList       = "prompts/list"
 	MethodPromptsGet        = "prompts/get"
+
+	// NotificationCancelled is the MCP 2025-11-25 notifications/cancelled
+	// message a peer emits to tell the other side it has abandoned an
+	// in-flight request and the recipient should stop processing it.
+	NotificationCancelled = "notifications/cancelled"
+
+	// NotificationProgress is the MCP 2025-11-25 notifications/progress
+	// message the server emits to report progress for a long-running
+	// request that was invoked with a `_meta.progressToken`.
+	NotificationProgress = "notifications/progress"
 )
+
+// CancelledParams are the params carried by notifications/cancelled.
+type CancelledParams struct {
+	RequestID interface{} `json:"requestId"`
+	Reason    string      `json:"reason,omitempty"`
+}
+
+// ProgressParams are the params carried by notifications/progress. The spec
+// lets progressToken be a string or number; total is optional — omit it for
+// indeterminate progress. Progress SHOULD increase monotonically but the
+// framework does not enforce this.
+type ProgressParams struct {
+	ProgressToken interface{} `json:"progressToken"`
+	Progress      float64     `json:"progress"`
+	Total         *float64    `json:"total,omitempty"`
+	Message       string      `json:"message,omitempty"`
+}
+
+// SupportedVersions lists protocol versions this server framework can handle.
+// Ordered latest-first; used for version negotiation during initialize.
+var SupportedVersions = []string{
+	"2025-11-25",
+	"2024-11-05",
+}
+
+// NegotiateVersion returns the version to use in the initialize response.
+// If the client's requested version is supported, return it; otherwise return
+// the server's latest supported version and let the client decide to proceed.
+func NegotiateVersion(clientVersion string) string {
+	for _, v := range SupportedVersions {
+		if v == clientVersion {
+			return v
+		}
+	}
+	return SupportedVersions[0]
+}
 
 // Error codes as per JSON-RPC 2.0
 const (
