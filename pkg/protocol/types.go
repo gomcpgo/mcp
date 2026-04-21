@@ -233,12 +233,28 @@ const (
 	// message a peer emits to tell the other side it has abandoned an
 	// in-flight request and the recipient should stop processing it.
 	NotificationCancelled = "notifications/cancelled"
+
+	// NotificationProgress is the MCP 2025-11-25 notifications/progress
+	// message the server emits to report progress for a long-running
+	// request that was invoked with a `_meta.progressToken`.
+	NotificationProgress = "notifications/progress"
 )
 
 // CancelledParams are the params carried by notifications/cancelled.
 type CancelledParams struct {
 	RequestID interface{} `json:"requestId"`
 	Reason    string      `json:"reason,omitempty"`
+}
+
+// ProgressParams are the params carried by notifications/progress. The spec
+// lets progressToken be a string or number; total is optional — omit it for
+// indeterminate progress. Progress SHOULD increase monotonically but the
+// framework does not enforce this.
+type ProgressParams struct {
+	ProgressToken interface{} `json:"progressToken"`
+	Progress      float64     `json:"progress"`
+	Total         *float64    `json:"total,omitempty"`
+	Message       string      `json:"message,omitempty"`
 }
 
 // SupportedVersions lists protocol versions this server framework can handle.

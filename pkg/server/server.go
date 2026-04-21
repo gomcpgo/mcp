@@ -92,6 +92,18 @@ func (s *Server) handleRequest(parent context.Context, req *protocol.Request) {
 		s.tracker.unregister(req.ID)
 	}()
 
+	// If the client attached `_meta.progressToken`, inject a reporter bound
+	// to that token so ProgressReporterFromContext(ctx).Report(...) in the
+	// handler becomes an outbound notifications/progress. No token → the
+	// handler-package default no-op reporter is used.
+	if token := extractProgressToken(req.Params); token != nil {
+		reporter := &transportProgressReporter{
+			sendNotification: s.SendNotification,
+			token:            token,
+		}
+		ctx = handler.WithProgressReporter(ctx, reporter)
+	}
+
 	result, err := s.dispatchRequest(ctx, req)
 
 	// If the client cancelled mid-flight, the handler's result (or error) is
