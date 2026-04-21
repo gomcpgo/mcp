@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/gomcpgo/mcp/pkg/handler"
 	"github.com/gomcpgo/mcp/pkg/protocol"
@@ -17,6 +18,20 @@ type Server struct {
 	registry  *handler.HandlerRegistry
 	transport transport.Transport
 	tracker   *requestTracker
+
+	// outbound correlates server-initiated requests (e.g. elicitation/create)
+	// with the response the client sends back.
+	outbound *outboundTracker
+
+	// elicitMu serializes Server.Elicit so only one elicitation is on the
+	// wire at a time per server instance. See docs/mcp-elicitation-plan.md.
+	elicitMu sync.Mutex
+
+	// clientCaps is the capabilities block the client sent during
+	// initialize. Used by Server.Elicit to refuse calls when the client did
+	// not advertise elicitation support.
+	clientCapsMu sync.RWMutex
+	clientCaps   *protocol.ClientCapabilities
 }
 
 // New creates a new MCP server instance with the provided options
@@ -43,6 +58,7 @@ func New(options Options) *Server {
 		registry:  defaultOpts.Registry,
 		transport: defaultOpts.Transport,
 		tracker:   newRequestTracker(),
+		outbound:  newOutboundTracker(),
 	}
 }
 
@@ -56,7 +72,7 @@ func (s *Server) Run() error {
 	}
 	defer s.transport.Stop(ctx)
 
-	// Process requests
+	// Process requests and client responses
 	for {
 		select {
 		case err := <-s.transport.Errors():
@@ -70,6 +86,15 @@ func (s *Server) Run() error {
 			}
 
 			go s.handleRequest(ctx, req)
+
+		case resp := <-s.transport.Responses():
+			if resp == nil {
+				log.Printf("Received nil response, shutting down")
+				return nil
+			}
+			// Route to the outbound tracker so whichever goroutine called
+			// Server.Elicit (or any future server→client request) unblocks.
+			s.outbound.resolve(resp.ID, resp)
 		}
 	}
 }
@@ -102,6 +127,13 @@ func (s *Server) handleRequest(parent context.Context, req *protocol.Request) {
 			token:            token,
 		}
 		ctx = handler.WithProgressReporter(ctx, reporter)
+	}
+
+	// Inject an Elicitor when the client declared elicitation support during
+	// initialize. Otherwise leave ctx alone and handlers see the stub
+	// returning ErrElicitationNotSupported.
+	if s.clientSupportsElicitation() {
+		ctx = handler.WithElicitor(ctx, serverElicitor{s: s})
 	}
 
 	result, err := s.dispatchRequest(ctx, req)
@@ -218,6 +250,14 @@ func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*p
 	if err := json.Unmarshal(params, &initReq); err != nil {
 		return nil, fmt.Errorf("invalid initialization parameters: %w", err)
 	}
+
+	// Remember the client's capabilities so Server.Elicit (and any future
+	// server→client calls) can refuse politely when the client didn't
+	// advertise the matching capability.
+	s.clientCapsMu.Lock()
+	caps := initReq.Capabilities
+	s.clientCaps = &caps
+	s.clientCapsMu.Unlock()
 
 	capabilities := protocol.Capabilities{}
 	if s.registry.HasToolHandler() {

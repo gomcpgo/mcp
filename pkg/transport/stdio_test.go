@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -144,6 +145,132 @@ func TestStdioTransport(t *testing.T) {
 	}
 }
 */
+
+func TestStdioSendRequest(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = pw
+	defer func() { os.Stdout = oldStdout }()
+
+	transport := NewStdioTransport()
+
+	req := &protocol.Request{
+		JSONRPC: "2.0",
+		ID:      7,
+		Method:  "elicitation/create",
+		Params:  json.RawMessage(`{"message":"x"}`),
+	}
+	if err := transport.SendRequest(req); err != nil {
+		t.Fatalf("SendRequest: %v", err)
+	}
+
+	pw.Close()
+	data, err := io.ReadAll(pr)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal %q: %v", string(data), err)
+	}
+
+	if decoded["method"] != "elicitation/create" {
+		t.Errorf("method = %v, want elicitation/create", decoded["method"])
+	}
+	if _, hasID := decoded["id"]; !hasID {
+		t.Error("server-initiated request must carry an id field")
+	}
+}
+
+func TestStdioRoutesResponseToResponsesChannel(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = pr
+	defer func() { os.Stdin = oldStdin }()
+
+	transport := NewStdioTransport()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := transport.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Write a response (has result, no method) to stdin.
+	resp := protocol.Response{
+		JSONRPC: "2.0",
+		ID:      7,
+		Result:  map[string]interface{}{"action": "accept"},
+	}
+	if err := json.NewEncoder(pw).Encode(resp); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	select {
+	case got := <-transport.Responses():
+		if got == nil {
+			t.Fatal("got nil response")
+		}
+		if fmtID(got.ID) != "7" {
+			t.Errorf("response ID = %v, want 7", got.ID)
+		}
+	case req := <-transport.Receive():
+		t.Fatalf("response was routed to requests channel: %+v", req)
+	case err := <-transport.Errors():
+		t.Fatalf("got error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for response")
+	}
+}
+
+func TestStdioRoutesRequestToRequestsChannel(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = pr
+	defer func() { os.Stdin = oldStdin }()
+
+	transport := NewStdioTransport()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := transport.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	req := protocol.Request{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "tools/list",
+	}
+	if err := json.NewEncoder(pw).Encode(req); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	select {
+	case got := <-transport.Receive():
+		if got.Method != "tools/list" {
+			t.Errorf("method = %v, want tools/list", got.Method)
+		}
+	case resp := <-transport.Responses():
+		t.Fatalf("request was routed to responses channel: %+v", resp)
+	case err := <-transport.Errors():
+		t.Fatalf("got error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for request")
+	}
+}
+
+func fmtID(id interface{}) string {
+	return fmt.Sprintf("%v", id)
+}
 
 func TestEOF(t *testing.T) {
 	pr, pw, err := os.Pipe()

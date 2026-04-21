@@ -82,8 +82,16 @@ type ClientInfo struct {
 
 // ClientCapabilities are the capabilities declared by the client
 type ClientCapabilities struct {
-	// Intentionally minimal — will expand when elicitation, sampling, etc. are added
+	// Elicitation, when non-nil, tells the server it may send
+	// elicitation/create requests to prompt the user for structured input
+	// mid-tool-call. Per spec, presence alone signals support; the struct
+	// itself is empty today.
+	Elicitation *ElicitationClientCapabilities `json:"elicitation,omitempty"`
 }
+
+// ElicitationClientCapabilities is the empty marker struct the client sends
+// under capabilities.elicitation when it supports elicitation/create.
+type ElicitationClientCapabilities struct{}
 
 // Initialize types
 type InitializeRequest struct {
@@ -229,6 +237,12 @@ const (
 	MethodPromptsList       = "prompts/list"
 	MethodPromptsGet        = "prompts/get"
 
+	// MethodElicitationCreate is the MCP 2025-11-25 server→client request
+	// sent when a tool handler needs to collect structured input from the
+	// user mid-execution. Only sent if the client advertised the
+	// `elicitation` capability during initialize.
+	MethodElicitationCreate = "elicitation/create"
+
 	// NotificationCancelled is the MCP 2025-11-25 notifications/cancelled
 	// message a peer emits to tell the other side it has abandoned an
 	// in-flight request and the recipient should stop processing it.
@@ -244,6 +258,30 @@ const (
 type CancelledParams struct {
 	RequestID interface{} `json:"requestId"`
 	Reason    string      `json:"reason,omitempty"`
+}
+
+// ElicitationAction values carried by an ElicitationResult. Per MCP spec,
+// `content` is present only when Action == ElicitationActionAccept.
+const (
+	ElicitationActionAccept  = "accept"
+	ElicitationActionDecline = "decline"
+	ElicitationActionCancel  = "cancel"
+)
+
+// ElicitationRequestParams is the payload of an elicitation/create request.
+// RequestedSchema is kept as raw JSON — the spec restricts it to a flat
+// object with primitive properties, but that's the server author's contract;
+// the framework forwards it verbatim.
+type ElicitationRequestParams struct {
+	Message         string          `json:"message"`
+	RequestedSchema json.RawMessage `json:"requestedSchema"`
+}
+
+// ElicitationResult is the client's reply to elicitation/create. Content is
+// populated only when Action == ElicitationActionAccept.
+type ElicitationResult struct {
+	Action  string                 `json:"action"`
+	Content map[string]interface{} `json:"content,omitempty"`
 }
 
 // ProgressParams are the params carried by notifications/progress. The spec

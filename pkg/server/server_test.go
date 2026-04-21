@@ -14,20 +14,24 @@ import (
 // Mock transport for testing. Slices are guarded by `mu` so go test -race
 // stays clean when the Run() goroutine appends while the test reads.
 type mockTransport struct {
-	requests chan *protocol.Request
-	errors   chan error
+	requests    chan *protocol.Request
+	clientResps chan *protocol.Response
+	errors      chan error
 
-	mu            sync.Mutex
-	responses     []*protocol.Response
-	notifications []*protocol.Notification
+	mu              sync.Mutex
+	responses       []*protocol.Response
+	notifications   []*protocol.Notification
+	outboundRequest []*protocol.Request
 }
 
 func newMockTransport() *mockTransport {
 	return &mockTransport{
-		requests:      make(chan *protocol.Request, 10),
-		errors:        make(chan error, 10),
-		responses:     make([]*protocol.Response, 0),
-		notifications: make([]*protocol.Notification, 0),
+		requests:        make(chan *protocol.Request, 10),
+		clientResps:     make(chan *protocol.Response, 10),
+		errors:          make(chan error, 10),
+		responses:       make([]*protocol.Response, 0),
+		notifications:   make([]*protocol.Notification, 0),
+		outboundRequest: make([]*protocol.Request, 0),
 	}
 }
 
@@ -37,6 +41,7 @@ func (t *mockTransport) Start(ctx context.Context) error {
 
 func (t *mockTransport) Stop(ctx context.Context) error {
 	close(t.requests)
+	close(t.clientResps)
 	close(t.errors)
 	return nil
 }
@@ -55,12 +60,37 @@ func (t *mockTransport) SendNotification(notification *protocol.Notification) er
 	return nil
 }
 
+func (t *mockTransport) SendRequest(request *protocol.Request) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.outboundRequest = append(t.outboundRequest, request)
+	return nil
+}
+
 func (t *mockTransport) Receive() <-chan *protocol.Request {
 	return t.requests
 }
 
+func (t *mockTransport) Responses() <-chan *protocol.Response {
+	return t.clientResps
+}
+
 func (t *mockTransport) Errors() <-chan error {
 	return t.errors
+}
+
+// outboundRequestCount returns the number of SendRequest calls made so far.
+func (t *mockTransport) outboundRequestCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.outboundRequest)
+}
+
+// outboundRequestAt returns the i-th outbound request under lock.
+func (t *mockTransport) outboundRequestAt(i int) *protocol.Request {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.outboundRequest[i]
 }
 
 // responsesSnapshot returns a copy of the current responses slice so tests
