@@ -59,7 +59,13 @@ type Capabilities struct {
 	Tools     *ToolsInfo     `json:"tools,omitempty"`
 	Resources *ResourcesInfo `json:"resources,omitempty"`
 	Prompts   *PromptsInfo   `json:"prompts,omitempty"`
+	Logging   *LoggingInfo   `json:"logging,omitempty"`
 }
+
+// LoggingInfo is the capability marker the server sends when it supports
+// logging/setLevel and notifications/message. Empty per spec — presence alone
+// advertises support.
+type LoggingInfo struct{}
 
 type ToolsInfo struct {
 	ListChanged bool `json:"listChanged,omitempty"`
@@ -252,6 +258,19 @@ const (
 	// message the server emits to report progress for a long-running
 	// request that was invoked with a `_meta.progressToken`.
 	NotificationProgress = "notifications/progress"
+
+	// MethodPing is the MCP 2025-11-25 ping request. Either peer MAY send
+	// it with an id; the receiver MUST reply with an empty result.
+	MethodPing = "ping"
+
+	// MethodLoggingSetLevel is the MCP 2025-11-25 client→server request used
+	// to change the minimum level the server should emit via
+	// notifications/message.
+	MethodLoggingSetLevel = "logging/setLevel"
+
+	// NotificationMessage is the MCP 2025-11-25 server→client notification
+	// carrying a structured log line (level, logger, data).
+	NotificationMessage = "notifications/message"
 )
 
 // CancelledParams are the params carried by notifications/cancelled.
