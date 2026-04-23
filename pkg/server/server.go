@@ -49,8 +49,17 @@ func New(options Options) *Server {
 	if options.Name != "" {
 		defaultOpts.Name = options.Name
 	}
+	if options.Title != "" {
+		defaultOpts.Title = options.Title
+	}
 	if options.Version != "" {
 		defaultOpts.Version = options.Version
+	}
+	if len(options.Icons) > 0 {
+		defaultOpts.Icons = options.Icons
+	}
+	if options.WebsiteURL != "" {
+		defaultOpts.WebsiteURL = options.WebsiteURL
 	}
 	if options.Registry != nil {
 		defaultOpts.Registry = options.Registry
