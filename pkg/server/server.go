@@ -32,6 +32,12 @@ type Server struct {
 	// not advertise elicitation support.
 	clientCapsMu sync.RWMutex
 	clientCaps   *protocol.ClientCapabilities
+
+	// logLevel is the minimum level at which LogMessage emits
+	// notifications/message. Controlled by logging/setLevel. Defaults to
+	// "info". Guarded by logMu.
+	logMu    sync.RWMutex
+	logLevel string
 }
 
 // New creates a new MCP server instance with the provided options
@@ -43,8 +49,17 @@ func New(options Options) *Server {
 	if options.Name != "" {
 		defaultOpts.Name = options.Name
 	}
+	if options.Title != "" {
+		defaultOpts.Title = options.Title
+	}
 	if options.Version != "" {
 		defaultOpts.Version = options.Version
+	}
+	if len(options.Icons) > 0 {
+		defaultOpts.Icons = options.Icons
+	}
+	if options.WebsiteURL != "" {
+		defaultOpts.WebsiteURL = options.WebsiteURL
 	}
 	if options.Registry != nil {
 		defaultOpts.Registry = options.Registry
@@ -59,6 +74,7 @@ func New(options Options) *Server {
 		transport: defaultOpts.Transport,
 		tracker:   newRequestTracker(),
 		outbound:  newOutboundTracker(),
+		logLevel:  protocol.LogLevelInfo,
 	}
 }
 
@@ -160,6 +176,22 @@ func (s *Server) dispatchRequest(ctx context.Context, req *protocol.Request) (in
 	case protocol.MethodInitialize:
 		return s.handleInitialize(ctx, req.Params)
 
+	case protocol.MethodPing:
+		return struct{}{}, nil
+
+	case protocol.MethodLoggingSetLevel:
+		var setReq protocol.SetLevelParams
+		if err := json.Unmarshal(req.Params, &setReq); err != nil {
+			return nil, fmt.Errorf("invalid logging/setLevel parameters: %w", err)
+		}
+		if protocol.LogLevelRank(setReq.Level) < 0 {
+			return nil, fmt.Errorf("unknown log level %q", setReq.Level)
+		}
+		s.logMu.Lock()
+		s.logLevel = setReq.Level
+		s.logMu.Unlock()
+		return struct{}{}, nil
+
 	case protocol.MethodToolsList:
 		if s.registry.HasToolHandler() {
 			return s.registry.GetToolHandler().ListTools(ctx)
@@ -259,7 +291,12 @@ func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*p
 	s.clientCaps = &caps
 	s.clientCapsMu.Unlock()
 
-	capabilities := protocol.Capabilities{}
+	capabilities := protocol.Capabilities{
+		// Logging is always advertised: the server may or may not emit
+		// notifications/message, but supporting logging/setLevel costs
+		// nothing, so every server exposes the capability.
+		Logging: &protocol.LoggingInfo{},
+	}
 	if s.registry.HasToolHandler() {
 		capabilities.Tools = &protocol.ToolsInfo{}
 	}
@@ -273,8 +310,11 @@ func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*p
 	return &protocol.InitializeResponse{
 		ProtocolVersion: protocol.NegotiateVersion(initReq.ProtocolVersion),
 		ServerInfo: protocol.ServerInfo{
-			Name:    s.options.Name,
-			Version: s.options.Version,
+			Name:       s.options.Name,
+			Title:      s.options.Title,
+			Version:    s.options.Version,
+			Icons:      s.options.Icons,
+			WebsiteURL: s.options.WebsiteURL,
 		},
 		Capabilities: capabilities,
 	}, nil
@@ -289,6 +329,27 @@ func (s *Server) SendNotification(method string, params interface{}) error {
 		return fmt.Errorf("failed to build notification: %w", err)
 	}
 	return s.transport.SendNotification(notification)
+}
+
+// LogMessage emits a notifications/message if level is at or above the
+// server's current threshold (controlled by logging/setLevel, default
+// "info"). Unknown levels are silently dropped. loggerName is optional.
+func (s *Server) LogMessage(level, loggerName string, data interface{}) error {
+	msgRank := protocol.LogLevelRank(level)
+	if msgRank < 0 {
+		return nil
+	}
+	s.logMu.RLock()
+	threshold := s.logLevel
+	s.logMu.RUnlock()
+	if msgRank < protocol.LogLevelRank(threshold) {
+		return nil
+	}
+	return s.SendNotification(protocol.NotificationMessage, protocol.LogMessageParams{
+		Level:  level,
+		Logger: loggerName,
+		Data:   data,
+	})
 }
 
 // sendResponse sends a successful response

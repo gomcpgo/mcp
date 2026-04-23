@@ -1,6 +1,9 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/base64"
+	"encoding/json"
+)
 
 // JSON-RPC 2.0 message types
 type Request struct {
@@ -49,17 +52,27 @@ type Error struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// MCP Protocol types
+// MCP Protocol types. Title, Icons, and WebsiteURL are MCP 2025-11-25
+// additions to the Implementation type; older servers omit them.
 type ServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name       string `json:"name"`
+	Title      string `json:"title,omitempty"`
+	Version    string `json:"version"`
+	Icons      []Icon `json:"icons,omitempty"`
+	WebsiteURL string `json:"websiteUrl,omitempty"`
 }
 
 type Capabilities struct {
 	Tools     *ToolsInfo     `json:"tools,omitempty"`
 	Resources *ResourcesInfo `json:"resources,omitempty"`
 	Prompts   *PromptsInfo   `json:"prompts,omitempty"`
+	Logging   *LoggingInfo   `json:"logging,omitempty"`
 }
+
+// LoggingInfo is the capability marker the server sends when it supports
+// logging/setLevel and notifications/message. Empty per spec — presence alone
+// advertises support.
+type LoggingInfo struct{}
 
 type ToolsInfo struct {
 	ListChanged bool `json:"listChanged,omitempty"`
@@ -131,12 +144,25 @@ type ToolAnnotations struct {
 	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
 
-// Icon describes an optional visual representation of a tool. Clients may
-// choose among multiple Icons based on the Sizes field (e.g. "48x48").
+// Icon describes an optional visual representation of a tool or server.
+// Clients may choose among multiple Icons based on the Sizes field (e.g.
+// "48x48").
 type Icon struct {
 	Src      string `json:"src"`
 	MimeType string `json:"mimeType,omitempty"`
 	Sizes    string `json:"sizes,omitempty"`
+}
+
+// IconFromSVG wraps an in-memory SVG byte slice as a one-entry []Icon with a
+// base64 data URI. Each MCP server embeds its own asset and calls this to
+// populate its server.Options.Icons — the framework does not ship or look up
+// icons on a server's behalf.
+func IconFromSVG(svg []byte) []Icon {
+	return []Icon{{
+		Src:      "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(svg),
+		MimeType: "image/svg+xml",
+		Sizes:    "any",
+	}}
 }
 
 type ListToolsResponse struct {
@@ -252,6 +278,19 @@ const (
 	// message the server emits to report progress for a long-running
 	// request that was invoked with a `_meta.progressToken`.
 	NotificationProgress = "notifications/progress"
+
+	// MethodPing is the MCP 2025-11-25 ping request. Either peer MAY send
+	// it with an id; the receiver MUST reply with an empty result.
+	MethodPing = "ping"
+
+	// MethodLoggingSetLevel is the MCP 2025-11-25 client→server request used
+	// to change the minimum level the server should emit via
+	// notifications/message.
+	MethodLoggingSetLevel = "logging/setLevel"
+
+	// NotificationMessage is the MCP 2025-11-25 server→client notification
+	// carrying a structured log line (level, logger, data).
+	NotificationMessage = "notifications/message"
 )
 
 // CancelledParams are the params carried by notifications/cancelled.

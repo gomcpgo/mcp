@@ -463,3 +463,38 @@ func TestServer(t *testing.T) {
 		t.Error("expected error response for unknown method")
 	}
 }
+
+func TestPingReturnsEmptyResult(t *testing.T) {
+	mockTransport := newMockTransport()
+	registry := handler.NewHandlerRegistry()
+	srv := New(Options{
+		Name:      "test-server",
+		Version:   "1.0.0",
+		Registry:  registry,
+		Transport: mockTransport,
+	})
+	go srv.Run()
+
+	mockTransport.requests <- &protocol.Request{
+		JSONRPC: "2.0",
+		ID:      42,
+		Method:  protocol.MethodPing,
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if mockTransport.responseCount() == 0 {
+		t.Fatal("no response received for ping")
+	}
+	resp := mockTransport.responseAt(0)
+	if resp.Error != nil {
+		t.Fatalf("ping response carried error: %v", resp.Error)
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("marshal ping result: %v", err)
+	}
+	if string(raw) != "{}" {
+		t.Errorf("ping result = %s, want {}", string(raw))
+	}
+}
