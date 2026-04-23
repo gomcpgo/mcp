@@ -2,15 +2,21 @@ package server
 
 import (
 	"github.com/gomcpgo/mcp/pkg/handler"
+	"github.com/gomcpgo/mcp/pkg/protocol"
 	"github.com/gomcpgo/mcp/pkg/transport"
 )
 
-// Options configures the MCP server
+// Options configures the MCP server. Title, Icons, and WebsiteURL feed the
+// MCP 2025-11-25 Implementation fields the server advertises during
+// initialize; leaving them zero-valued keeps them out of the response.
 type Options struct {
-	Name      string
-	Version   string
-	Registry  *handler.HandlerRegistry
-	Transport transport.Transport
+	Name       string
+	Title      string
+	Version    string
+	Icons      []protocol.Icon
+	WebsiteURL string
+	Registry   *handler.HandlerRegistry
+	Transport  transport.Transport
 }
 
 // Option is a function that can be used to configure the server

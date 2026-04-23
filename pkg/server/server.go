@@ -301,8 +301,11 @@ func (s *Server) handleInitialize(_ context.Context, params json.RawMessage) (*p
 	return &protocol.InitializeResponse{
 		ProtocolVersion: protocol.NegotiateVersion(initReq.ProtocolVersion),
 		ServerInfo: protocol.ServerInfo{
-			Name:    s.options.Name,
-			Version: s.options.Version,
+			Name:       s.options.Name,
+			Title:      s.options.Title,
+			Version:    s.options.Version,
+			Icons:      s.options.Icons,
+			WebsiteURL: s.options.WebsiteURL,
 		},
 		Capabilities: capabilities,
 	}, nil
