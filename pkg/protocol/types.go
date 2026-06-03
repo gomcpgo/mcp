@@ -145,12 +145,13 @@ type ToolAnnotations struct {
 }
 
 // Icon describes an optional visual representation of a tool or server.
-// Clients may choose among multiple Icons based on the Sizes field (e.g.
-// "48x48").
+// Clients may choose among multiple Icons based on the Sizes field. Per the
+// MCP spec, sizes is an array of WebApp-manifest-style size strings (e.g.
+// ["48x48", "96x96"] or ["any"] for scalable SVG).
 type Icon struct {
-	Src      string `json:"src"`
-	MimeType string `json:"mimeType,omitempty"`
-	Sizes    string `json:"sizes,omitempty"`
+	Src      string   `json:"src"`
+	MimeType string   `json:"mimeType,omitempty"`
+	Sizes    []string `json:"sizes,omitempty"`
 }
 
 // IconFromSVG wraps an in-memory SVG byte slice as a one-entry []Icon with a
@@ -161,7 +162,7 @@ func IconFromSVG(svg []byte) []Icon {
 	return []Icon{{
 		Src:      "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(svg),
 		MimeType: "image/svg+xml",
-		Sizes:    "any",
+		Sizes:    []string{"any"},
 	}}
 }
 

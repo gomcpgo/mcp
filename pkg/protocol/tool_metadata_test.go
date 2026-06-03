@@ -90,7 +90,7 @@ func TestToolMarshalling_IncludesIconsWhenSet(t *testing.T) {
 		Description: "has icons",
 		InputSchema: json.RawMessage(`{}`),
 		Icons: []Icon{
-			{Src: "data:image/png;base64,AAA", MimeType: "image/png", Sizes: "48x48"},
+			{Src: "data:image/png;base64,AAA", MimeType: "image/png", Sizes: []string{"48x48"}},
 			{Src: "https://example.com/icon.svg", MimeType: "image/svg+xml"},
 		},
 	}
@@ -116,8 +116,9 @@ func TestToolMarshalling_IncludesIconsWhenSet(t *testing.T) {
 	if first["src"] != "data:image/png;base64,AAA" {
 		t.Errorf("icons[0].src = %v", first["src"])
 	}
-	if first["sizes"] != "48x48" {
-		t.Errorf("icons[0].sizes = %v, want 48x48", first["sizes"])
+	sizes, ok := first["sizes"].([]interface{})
+	if !ok || len(sizes) != 1 || sizes[0] != "48x48" {
+		t.Errorf("icons[0].sizes = %v, want [48x48]", first["sizes"])
 	}
 	second := icons[1].(map[string]interface{})
 	if _, hasSizes := second["sizes"]; hasSizes {
