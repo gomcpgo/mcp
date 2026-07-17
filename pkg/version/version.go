@@ -7,7 +7,7 @@ import (
 
 // Version is the current version of the MCP library.
 // This is manually updated with each release.
-const Version = "v1.0.1"
+const Version = "v1.0.4"
 
 // Info contains versioning information.
 type Info struct {
