@@ -117,7 +117,7 @@ func (s *Server) Run() error {
 
 // handleRequest processes individual requests
 func (s *Server) handleRequest(parent context.Context, req *protocol.Request) {
-	log.Printf("MCP server req received:\n%v\n", PrettyJSON(req))
+	log.Printf("MCP server req received:\n%v\n", truncatedJSON(req))
 
 	// Notifications (no id) do not receive a response.
 	if req.ID == nil {
@@ -360,7 +360,7 @@ func (s *Server) sendResponse(id interface{}, result interface{}) {
 		Result:  result,
 	}
 
-	log.Printf("MCP server response:\n%v\n", PrettyJSON(response))
+	log.Printf("MCP server response:\n%v\n", truncatedJSON(response))
 	if err := s.transport.Send(response); err != nil {
 		log.Printf("Error sending response: %v", err)
 	}
@@ -377,7 +377,7 @@ func (s *Server) sendError(id interface{}, code int, message string) {
 		},
 	}
 
-	log.Printf("MCP server error response:\n%v\n", PrettyJSON(response))
+	log.Printf("MCP server error response:\n%v\n", truncatedJSON(response))
 	if err := s.transport.Send(response); err != nil {
 		log.Printf("Error sending error response: %v", err)
 	}
